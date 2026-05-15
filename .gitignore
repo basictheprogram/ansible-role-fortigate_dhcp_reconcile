@@ -6,6 +6,7 @@
 .env
 .venv/
 __pycache__/
+scripts/.env
 venv/
 yyy.sh
 zzz.sh
