@@ -76,8 +76,8 @@ end
 Each `edit <id>` block shows a server ID. Or query the API directly:
 
 ```bash
-# zzz.sh — fill in your token and host
-bash zzz.sh
+cp .env.example .env   # fill in FG_HOST, FG_TOKEN, FG_DHCP_SERVER_ID
+bash scripts/fortigate_dhcp_server.sh
 ```
 
 ### NetBox connection
@@ -89,15 +89,6 @@ bash zzz.sh
 | `netbox_validate_certs` | `false` | Set `true` for valid TLS |
 | `netbox_site_slug` | `main` | Site slug to filter devices |
 | `netbox_device_role_slug` | `printer` | Device role slug to filter devices |
-
-**Finding your site and role slugs** — use the bundled helper:
-
-```bash
-# yyy.sh — fill in your token and NetBox host
-bash yyy.sh
-```
-
-Or browse to `/api/dcim/sites/` and `/api/dcim/device-roles/` in your NetBox instance.
 
 ### Subnet and report
 
@@ -195,14 +186,21 @@ printer_subnet: "192.168.0.0/23"
 
 ## Debug scripts
 
-Two helper scripts are included for manual API verification:
+Two helper scripts live in `scripts/` for manual API verification. Both load credentials from a `.env` file:
+
+```bash
+cp .env.example .env   # fill in your values — this file is gitignored
+```
 
 | Script | Purpose |
 |---|---|
-| `zzz.sh` | Verify FortiGate CMDB connectivity and confirm the DHCP server ID |
-| `yyy.sh` | List valid NetBox site slugs and device-role slugs |
+| `scripts/fortigate_dhcp_server.sh` | Fetch FortiGate DHCP server config — confirm server ID and inspect reserved addresses |
+| `scripts/netbox_slugs.sh` | List valid NetBox site slugs and device-role slugs |
 
-Edit each script to set your token and host before running.
+```bash
+bash scripts/fortigate_dhcp_server.sh
+bash scripts/netbox_slugs.sh
+```
 
 ---
 
