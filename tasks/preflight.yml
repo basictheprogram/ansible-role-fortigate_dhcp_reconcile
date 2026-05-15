@@ -1,0 +1,154 @@
+---
+# roles/fortigate_dhcp_reconcile/tasks/preflight.yml
+# Validates every required variable before any API call or file operation.
+# Fails immediately with an actionable message so nothing is left in a partial state.
+
+# ── NetBox connection ──────────────────────────────────────────────────────
+
+- name: "Preflight | NetBox URL is set and is a valid HTTP/HTTPS URL"
+  ansible.builtin.assert:
+    that:
+      - netbox_url is defined
+      - netbox_url | length > 0
+      - netbox_url is match('^https?://.+')
+    fail_msg: >-
+      'netbox_url' must be a valid HTTP or HTTPS URL.
+      Got: '{{ netbox_url | default("undefined") }}'.
+      Fix: set netbox_url in group_vars/all/main.yml
+      e.g.  netbox_url: "https://netbox.example.com"
+
+- name: "Preflight | NetBox API token is set"
+  ansible.builtin.assert:
+    that:
+      - netbox_token is defined
+      - netbox_token | length > 0
+    fail_msg: >-
+      'netbox_token' is not set or is empty.
+      Fix: add vault_netbox_token to group_vars/all/vault.yml, then encrypt:
+        ansible-vault encrypt group_vars/all/vault.yml
+  no_log: true
+
+# ── NetBox filters ─────────────────────────────────────────────────────────
+
+- name: "Preflight | NetBox site slug is set"
+  ansible.builtin.assert:
+    that:
+      - netbox_site_slug is defined
+      - netbox_site_slug | length > 0
+    fail_msg: >-
+      'netbox_site_slug' is not set or is empty.
+      Fix: set it in group_vars/all/main.yml to match your NetBox site slug.
+      e.g.  netbox_site_slug: "main"
+      Check available slugs at {{ netbox_url | default("your NetBox URL") }}/api/dcim/sites/
+
+- name: "Preflight | NetBox device role slug is set"
+  ansible.builtin.assert:
+    that:
+      - netbox_device_role_slug is defined
+      - netbox_device_role_slug | length > 0
+    fail_msg: >-
+      'netbox_device_role_slug' is not set or is empty.
+      Fix: set it in group_vars/all/main.yml to match your NetBox device role slug.
+      e.g.  netbox_device_role_slug: "printer"
+      Check available slugs at {{ netbox_url | default("your NetBox URL") }}/api/dcim/device-roles/
+
+# ── FortiGate connection ───────────────────────────────────────────────────
+
+- name: "Preflight | FortiGate VDOM name is set"
+  ansible.builtin.assert:
+    that:
+      - fortigate_vdom is defined
+      - fortigate_vdom | length > 0
+    fail_msg: >-
+      'fortigate_vdom' is not set or is empty.
+      Fix: set fortigate_vdom in host_vars/{{ inventory_hostname }}/main.yml.
+      Single-VDOM appliances use "root". Multi-VDOM: check FortiOS System → VDOM,
+      or run on the appliance CLI: get system status
+
+- name: "Preflight | FortiGate host is set"
+  ansible.builtin.assert:
+    that:
+      - fortigate_host is defined
+      - fortigate_host | length > 0
+    fail_msg: >-
+      'fortigate_host' is not set or is empty.
+      Fix: set it in group_vars/all/main.yml to your FortiGate IP or hostname.
+      e.g.  fortigate_host: "192.168.1.1"
+
+- name: "Preflight | FortiGate port is a valid TCP port number"
+  ansible.builtin.assert:
+    that:
+      - fortigate_port is defined
+      - fortigate_port | int >= 1
+      - fortigate_port | int <= 65535
+    fail_msg: >-
+      'fortigate_port' must be a valid TCP port (1–65535).
+      Got: '{{ fortigate_port | default("undefined") }}'.
+      Fix: set fortigate_port in group_vars/all/main.yml. Default: 443
+
+- name: "Preflight | FortiGate API token is set"
+  ansible.builtin.assert:
+    that:
+      - fortigate_api_token is defined
+      - fortigate_api_token | length > 0
+    fail_msg: >-
+      'fortigate_api_token' is not set or is empty.
+      Fix: add vault_fortigate_api_token to group_vars/all/vault.yml, then encrypt:
+        ansible-vault encrypt group_vars/all/vault.yml
+      Create the token in FortiOS: System → Administrators → REST API Admin.
+  no_log: true
+
+- name: "Preflight | FortiGate DHCP server ID is a positive integer"
+  ansible.builtin.assert:
+    that:
+      - fortigate_dhcp_server_id is defined
+      - fortigate_dhcp_server_id | int > 0
+    fail_msg: >-
+      'fortigate_dhcp_server_id' must be a positive integer.
+      Got: '{{ fortigate_dhcp_server_id | default("undefined") }}'.
+      Fix: find the ID in FortiOS — config system dhcp server — and set
+      fortigate_dhcp_server_id in group_vars/all/main.yml.
+
+# ── Subnet ─────────────────────────────────────────────────────────────────
+
+- name: "Preflight | Printer subnet is a valid CIDR"
+  ansible.builtin.assert:
+    that:
+      - printer_subnet is defined
+      - printer_subnet | length > 0
+      - printer_subnet is match('^\d{1,3}(\.\d{1,3}){3}/\d{1,2}$')
+    fail_msg: >-
+      'printer_subnet' must be a valid IPv4 CIDR range.
+      Got: '{{ printer_subnet | default("undefined") }}'.
+      Fix: set printer_subnet in group_vars/all/main.yml.
+      e.g.  printer_subnet: "10.0.10.0/24"
+
+# ── Report output ──────────────────────────────────────────────────────────
+
+- name: "Preflight | Report output path is set"
+  ansible.builtin.assert:
+    that:
+      - reconcile_report_path is defined
+      - reconcile_report_path | length > 0
+    fail_msg: >-
+      'reconcile_report_path' is not set or is empty.
+      Fix: set it in defaults or group_vars.
+      Default: reports/reconciliation_{{ now(utc=true, fmt='%Y-%m-%d') }}.html
+
+# ── Summary ────────────────────────────────────────────────────────────────
+
+- name: "Preflight | All checks passed — configuration summary"
+  ansible.builtin.debug:
+    msg:
+      - "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+      - " fortigate_dhcp_reconcile — preflight OK"
+      - "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+      - "  NetBox URL        : {{ netbox_url }}"
+      - "  Site slug         : {{ netbox_site_slug }}"
+      - "  Device role slug  : {{ netbox_device_role_slug }}"
+      - "  FortiGate host    : {{ fortigate_host }}:{{ fortigate_port }} (vdom={{ fortigate_vdom }})"
+      - "  DHCP endpoint     : /api/v2/cmdb/system.dhcp/server/{{ fortigate_dhcp_server_id }}?vdom={{ fortigate_vdom }}"
+      - "  DHCP server ID    : {{ fortigate_dhcp_server_id }}"
+      - "  Printer subnet    : {{ printer_subnet }}"
+      - "  Report path       : {{ reconcile_report_path }}"
+      - "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"

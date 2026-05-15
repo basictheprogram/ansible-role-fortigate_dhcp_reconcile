@@ -1,0 +1,88 @@
+---
+# roles/fortigate_dhcp_reconcile/tasks/fix_netbox.yml
+# Only runs when explicitly tagged: --tags fix_netbox
+# Updates Netbox primary IP to match the live Fortigate lease for drifted devices.
+# For devices with no IP in Netbox at all, creates the IP object and assigns it.
+
+- name: "Fix Netbox | Confirm there is drift to fix"
+  ansible.builtin.debug:
+    msg: "{{ result_ip_drift | length }} devices have IP drift. Patching Netbox now."
+  when: result_ip_drift | length > 0
+
+- name: "Fix Netbox | Nothing to do"
+  ansible.builtin.debug:
+    msg: "No IP drift detected. Netbox is already consistent with Fortigate leases."
+  when: result_ip_drift | length == 0
+
+# ── For devices that have an existing IP object in Netbox → PATCH it ──────
+- name: "Fix Netbox | PATCH existing IP address to match Fortigate"
+  ansible.builtin.uri:
+    url: "{{ netbox_url }}/api/ipam/ip-addresses/{{ item.nb_ip_id }}/"
+    method: PATCH
+    headers:
+      Authorization: "Token {{ netbox_token }}"
+      Content-Type: "application/json"
+    body_format: json
+    body:
+      address: "{{ item.fg_ip }}/24"
+    validate_certs: "{{ netbox_validate_certs }}"
+    status_code: 200
+  loop: "{{ result_ip_drift | selectattr('nb_ip_id', 'ne', none) | list }}"
+  loop_control:
+    label: "{{ item.name }} {{ item.nb_ip }} → {{ item.fg_ip }}"
+  no_log: true
+  register: _patch_results
+
+- name: "Fix Netbox | Log patched IPs"
+  ansible.builtin.debug:
+    msg: "Patched {{ item.name }}: {{ item.nb_ip | default('(none)') }} → {{ item.fg_ip }}"
+  loop: "{{ result_ip_drift | selectattr('nb_ip_id', 'ne', none) | list }}"
+  loop_control:
+    label: "{{ item.name }}"
+
+# ── For devices with NO IP object in Netbox yet → POST new IP, then assign ─
+- name: "Fix Netbox | POST new IP address for devices missing one"
+  ansible.builtin.uri:
+    url: "{{ netbox_url }}/api/ipam/ip-addresses/"
+    method: POST
+    headers:
+      Authorization: "Token {{ netbox_token }}"
+      Content-Type: "application/json"
+    body_format: json
+    body:
+      address: "{{ item.fg_ip }}/24"
+      status: "active"
+      description: "Auto-assigned from Fortigate reconciliation"
+    validate_certs: "{{ netbox_validate_certs }}"
+    status_code: 201
+  loop: "{{ result_ip_drift | selectattr('nb_ip_id', 'equalto', none) | list }}"
+  loop_control:
+    label: "{{ item.name }} → new {{ item.fg_ip }}"
+  no_log: true
+  register: _new_ip_results
+
+- name: "Fix Netbox | Assign new IPs as primary on their devices"
+  ansible.builtin.uri:
+    url: "{{ netbox_url }}/api/dcim/devices/{{ item.0.device_id }}/"
+    method: PATCH
+    headers:
+      Authorization: "Token {{ netbox_token }}"
+      Content-Type: "application/json"
+    body_format: json
+    body:
+      primary_ip4: "{{ item.1.json.id }}"
+    validate_certs: "{{ netbox_validate_certs }}"
+    status_code: 200
+  loop: >-
+    {{
+      (result_ip_drift | selectattr('nb_ip_id', 'equalto', none) | list)
+      | zip(_new_ip_results.results)
+      | list
+    }}
+  loop_control:
+    label: "{{ item.0.name }}"
+  no_log: true
+
+- name: "Fix Netbox | Reconciliation complete"
+  ansible.builtin.debug:
+    msg: "Netbox IPs updated. Re-run without --tags fix_netbox to verify."

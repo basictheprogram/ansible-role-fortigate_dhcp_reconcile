@@ -1,0 +1,324 @@
+{# roles/fortigate_dhcp_reconcile/templates/reconciliation_report.html.j2 #}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Printer DHCP Reconciliation — {{ reconcile_timestamp }}</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: #0f1117;
+      color: #e2e8f0;
+      padding: 2rem;
+      min-height: 100vh;
+    }
+
+    .header {
+      border-bottom: 1px solid #2d3748;
+      padding-bottom: 1.5rem;
+      margin-bottom: 2rem;
+    }
+
+    .header h1 {
+      font-size: 1.5rem;
+      font-weight: 600;
+      color: #f7fafc;
+      letter-spacing: -0.02em;
+    }
+
+    .header .meta {
+      font-size: 0.8rem;
+      color: #718096;
+      margin-top: 0.4rem;
+    }
+
+    .summary-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 1rem;
+      margin-bottom: 2.5rem;
+    }
+
+    .stat-card {
+      background: #1a1f2e;
+      border: 1px solid #2d3748;
+      border-radius: 8px;
+      padding: 1.2rem 1.5rem;
+    }
+
+    .stat-card .count {
+      font-size: 2rem;
+      font-weight: 700;
+      line-height: 1;
+    }
+
+    .stat-card .label {
+      font-size: 0.75rem;
+      color: #718096;
+      margin-top: 0.4rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    .ok    .count { color: #68d391; }
+    .drift .count { color: #f6ad55; }
+    .nb    .count { color: #63b3ed; }
+    .fg    .count { color: #fc8181; }
+
+    .ok    { border-left: 3px solid #68d391; }
+    .drift { border-left: 3px solid #f6ad55; }
+    .nb    { border-left: 3px solid #63b3ed; }
+    .fg    { border-left: 3px solid #fc8181; }
+
+    section { margin-bottom: 2.5rem; }
+
+    section h2 {
+      font-size: 0.9rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: #a0aec0;
+      margin-bottom: 1rem;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+
+    section h2 .badge {
+      font-size: 0.7rem;
+      padding: 0.1rem 0.5rem;
+      border-radius: 999px;
+      font-weight: 600;
+    }
+
+    .ok-badge    { background: #1c4532; color: #68d391; }
+    .drift-badge { background: #44271a; color: #f6ad55; }
+    .nb-badge    { background: #1a2c45; color: #63b3ed; }
+    .fg-badge    { background: #3d1515; color: #fc8181; }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.85rem;
+    }
+
+    thead tr {
+      background: #1a1f2e;
+    }
+
+    th {
+      text-align: left;
+      padding: 0.6rem 1rem;
+      font-size: 0.7rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: #718096;
+      border-bottom: 1px solid #2d3748;
+    }
+
+    td {
+      padding: 0.65rem 1rem;
+      border-bottom: 1px solid #1a1f2e;
+      font-family: "SF Mono", "Fira Code", monospace;
+      font-size: 0.8rem;
+      color: #cbd5e0;
+    }
+
+    tr:hover td { background: #1a1f2e; }
+
+    .tag-ok    { color: #68d391; }
+    .tag-drift { color: #f6ad55; font-weight: 600; }
+    .tag-nb    { color: #63b3ed; }
+    .tag-fg    { color: #fc8181; }
+
+    .empty {
+      color: #4a5568;
+      font-style: italic;
+      font-family: inherit;
+      font-size: 0.85rem;
+      padding: 1.5rem 1rem;
+    }
+
+    .action-note {
+      background: #2d2005;
+      border: 1px solid #744210;
+      border-radius: 6px;
+      padding: 0.8rem 1rem;
+      font-size: 0.82rem;
+      color: #fbd38d;
+      margin-bottom: 1rem;
+    }
+
+    .action-note code {
+      background: #1a1000;
+      padding: 0.1rem 0.4rem;
+      border-radius: 3px;
+      font-size: 0.78rem;
+    }
+  </style>
+</head>
+<body>
+
+<div class="header">
+  <h1>🖨️ Printer DHCP Reconciliation Report</h1>
+  <div class="meta">
+    Generated: {{ reconcile_timestamp }} &nbsp;·&nbsp;
+    Site: {{ netbox_site_slug }} &nbsp;·&nbsp;
+    Subnet: {{ printer_subnet }}
+  </div>
+</div>
+
+<div class="summary-grid">
+  <div class="stat-card ok">
+    <div class="count">{{ result_ok | length }}</div>
+    <div class="label">IPs match</div>
+  </div>
+  <div class="stat-card drift">
+    <div class="count">{{ result_ip_drift | length }}</div>
+    <div class="label">IP drift</div>
+  </div>
+  <div class="stat-card nb">
+    <div class="count">{{ result_nb_only | length }}</div>
+    <div class="label">Netbox only (offline?)</div>
+  </div>
+  <div class="stat-card fg">
+    <div class="count">{{ result_fg_only | length }}</div>
+    <div class="label">Unknown (not in Netbox)</div>
+  </div>
+</div>
+
+{# ── IP Drift ──────────────────────────────────────────────────────────── #}
+{% if result_ip_drift | length > 0 %}
+<section>
+  <h2>
+    ⚠️ IP Drift
+    <span class="badge drift-badge">{{ result_ip_drift | length }}</span>
+  </h2>
+  <div class="action-note">
+    These devices are online but Netbox has a different IP than the Fortigate lease.
+    Run <code>ansible-playbook reconcile_printers.yml --tags fix_netbox</code> to patch Netbox,
+    or resolve manually before migrating to Kea.
+  </div>
+  <table>
+    <thead>
+      <tr>
+        <th>Device Name</th>
+        <th>MAC Address</th>
+        <th>Netbox IP</th>
+        <th>Fortigate Lease IP</th>
+        <th>Action</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for d in result_ip_drift | sort(attribute='name') %}
+      <tr>
+        <td>{{ d.name }}</td>
+        <td>{{ d.mac }}</td>
+        <td>{{ d.nb_ip | default('—') }}</td>
+        <td class="tag-drift">{{ d.fg_ip }}</td>
+        <td class="tag-drift">Update Netbox → {{ d.fg_ip }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endif %}
+
+{# ── Unknown Devices ──────────────────────────────────────────────────── #}
+{% if result_fg_only | length > 0 %}
+<section>
+  <h2>
+    ❓ Unknown Devices (Fortigate only)
+    <span class="badge fg-badge">{{ result_fg_only | length }}</span>
+  </h2>
+  <div class="action-note">
+    These MACs have active Fortigate leases but no matching device in Netbox.
+    Investigate and add to Netbox if they are printers, or identify and document if not.
+  </div>
+  <table>
+    <thead>
+      <tr>
+        <th>Fortigate Hostname</th>
+        <th>MAC Address</th>
+        <th>Current IP</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for d in result_fg_only | sort(attribute='fg_ip') %}
+      <tr>
+        <td>{{ d.name | default('—') }}</td>
+        <td class="tag-fg">{{ d.mac }}</td>
+        <td>{{ d.fg_ip }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endif %}
+
+{# ── Netbox Only (offline) ─────────────────────────────────────────────── #}
+{% if result_nb_only | length > 0 %}
+<section>
+  <h2>
+    🔌 Offline / Not Seen (Netbox only)
+    <span class="badge nb-badge">{{ result_nb_only | length }}</span>
+  </h2>
+  <table>
+    <thead>
+      <tr>
+        <th>Device Name</th>
+        <th>MAC Address</th>
+        <th>Netbox IP</th>
+        <th>Note</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for d in result_nb_only | sort(attribute='name') %}
+      <tr>
+        <td>{{ d.name }}</td>
+        <td>{{ d.mac }}</td>
+        <td>{{ d.nb_ip | default('—') }}</td>
+        <td class="tag-nb">No active lease — powered off or unplugged?</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endif %}
+
+{# ── OK ───────────────────────────────────────────────────────────────── #}
+<section>
+  <h2>
+    ✅ IPs Match
+    <span class="badge ok-badge">{{ result_ok | length }}</span>
+  </h2>
+  {% if result_ok | length == 0 %}
+    <div class="empty">No devices with matching IPs found.</div>
+  {% else %}
+  <table>
+    <thead>
+      <tr>
+        <th>Device Name</th>
+        <th>MAC Address</th>
+        <th>IP Address</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for d in result_ok | sort(attribute='name') %}
+      <tr>
+        <td>{{ d.name }}</td>
+        <td>{{ d.mac }}</td>
+        <td class="tag-ok">{{ d.nb_ip }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+</section>
+
+</body>
+</html>

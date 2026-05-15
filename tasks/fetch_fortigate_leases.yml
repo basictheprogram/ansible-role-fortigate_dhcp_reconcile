@@ -1,0 +1,105 @@
+---
+# roles/fortigate_dhcp_reconcile/tasks/fetch_fortigate_leases.yml
+# Pulls DHCP reserved addresses from FortiGate via the CMDB endpoint and
+# filters to printer_subnet in Ansible.
+#
+# Uses /api/v2/cmdb/system.dhcp/server/<id> because the monitor endpoint
+# (/api/v2/monitor/dhcp/leases) is absent on FortiOS 7.4.x.
+# Reserved addresses are the source of truth — unreserved devices are
+# considered misconfigured and are out of scope for this role.
+
+# ── Step 1: Show exactly what URL we are about to call ────────────────────
+
+- name: "Fortigate | Debug — CMDB URL being used"
+  ansible.builtin.debug:
+    msg: >-
+      FortiGate base URL: https://{{ fortigate_host }}:{{ fortigate_port }}
+      DHCP server endpoint: /api/v2/cmdb/system.dhcp/server/{{ fortigate_dhcp_server_id }}?vdom={{ fortigate_vdom }}
+      Override fortigate_dhcp_server_id in host_vars if this returns no results.
+
+# ── Step 2: Probe system/status to verify basic API connectivity ──────────
+# This endpoint exists on every FortiOS version and requires no special perms.
+
+- name: "Fortigate | Probe system/status to verify API access"
+  ansible.builtin.uri:
+    url: >-
+      https://{{ fortigate_host }}:{{ fortigate_port
+      }}/api/v2/monitor/system/status?vdom={{ fortigate_vdom }}
+    method: GET
+    headers:
+      Authorization: "Bearer {{ fortigate_api_token }}"
+      Content-Type: "application/json"
+    validate_certs: "{{ fortigate_validate_certs }}"
+    return_content: true
+    status_code: 200
+  register: _fg_status
+  no_log: true
+
+- name: "Fortigate | Show FortiOS version (confirms API is reachable)"
+  ansible.builtin.debug:
+    msg: >-
+      FortiGate API OK —
+      model={{ _fg_status.json.results.model | default('unknown') }}
+      FortiOS={{ _fg_status.json.version | default(_fg_status.json.results.version | default('unknown')) }}
+
+# ── Step 3: Fetch DHCP server reserved addresses ──────────────────────────
+
+- name: "Fortigate | Fetch reserved addresses for DHCP server {{ fortigate_dhcp_server_id }}"
+  ansible.builtin.uri:
+    url: >-
+      https://{{ fortigate_host }}:{{ fortigate_port
+      }}/api/v2/cmdb/system.dhcp/server/{{ fortigate_dhcp_server_id
+      }}?vdom={{ fortigate_vdom }}
+    method: GET
+    headers:
+      Authorization: "Bearer {{ fortigate_api_token }}"
+      Content-Type: "application/json"
+    validate_certs: "{{ fortigate_validate_certs }}"
+    return_content: true
+    status_code: 200
+  register: _fg_dhcp_raw
+  no_log: true
+
+- name: "Fortigate | Fail if DHCP server returned no data — server {{ fortigate_dhcp_server_id }}"
+  ansible.builtin.fail:
+    msg: |
+      FortiGate returned no results for DHCP server {{ fortigate_dhcp_server_id }}.
+      Verify fortigate_dhcp_server_id is correct.
+
+      List all DHCP servers:
+        curl -sk -H "Authorization: Bearer <token>" \
+          "https://{{ fortigate_host }}:{{ fortigate_port }}/api/v2/cmdb/system.dhcp/server?vdom={{ fortigate_vdom }}"
+
+      FortiOS CLI:
+        config system dhcp server
+        show
+  when: (_fg_dhcp_raw.json.results | length) == 0
+
+# ── Step 4: Normalise and filter to printer subnet ─────────────────────────
+# fortigate_leases is keyed by bare MAC (no separators, lowercase) to match
+# the key format used by fetch_netbox_devices.yml.
+
+- name: "Fortigate | Normalise reserved addresses and filter to {{ printer_subnet }}"
+  ansible.builtin.set_fact:
+    fortigate_leases: >-
+      {{
+        fortigate_leases | default({}) | combine({
+          item.mac | lower | regex_replace('[^0-9a-f]', '') : {
+            'ip':       item.ip,
+            'mac':      item.mac | lower,
+            'mac_bare': item.mac | lower | regex_replace('[^0-9a-f]', ''),
+            'hostname': item.description | default('')
+          }
+        })
+      }}
+  loop: "{{ _fg_dhcp_raw.json.results[0]['reserved-address'] }}"
+  loop_control:
+    label: "{{ item.mac }} → {{ item.ip }}"
+  when: item.ip | ansible.utils.ipaddr(printer_subnet) is string
+
+- name: "Fortigate | Summary"
+  ansible.builtin.debug:
+    msg: >-
+      {{ fortigate_leases | default({}) | length }} reserved address(es) in {{ printer_subnet }}
+      ({{ _fg_dhcp_raw.json.results[0]['reserved-address'] | length }} total reservations
+      in server {{ fortigate_dhcp_server_id }}, vdom={{ fortigate_vdom }}).

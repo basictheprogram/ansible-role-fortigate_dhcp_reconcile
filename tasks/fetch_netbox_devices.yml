@@ -1,0 +1,143 @@
+---
+# roles/fortigate_dhcp_reconcile/tasks/fetch_netbox_devices.yml
+# Queries NetBox for all devices matching site + role filters.
+# For each device, fetches its interfaces (to get MACs) and primary IP.
+# Handles NetBox pagination automatically.
+#
+# Outputs:
+#   netbox_devices       - dict keyed by bare MAC (no colons, lowercase)
+#   result_nb_incomplete - list of devices with no interface / no MAC
+
+- name: "Netbox | Fetch all printer devices (paginated)"
+  ansible.builtin.uri:
+    url: "{{ netbox_url }}/api/dcim/devices/?site={{ netbox_site_slug }}&role={{ netbox_device_role_slug }}&limit=100&offset={{ offset }}"
+    method: GET
+    headers:
+      Authorization: "Token {{ netbox_token }}"
+      Content-Type: "application/json"
+    validate_certs: "{{ netbox_validate_certs }}"
+    return_content: true
+    status_code: [200, 400]
+  register: _nb_device_page
+  vars:
+    offset: "{{ (nb_device_page_num | default(0)) * 100 }}"
+  no_log: true
+
+- name: "Netbox | Fail with NetBox error detail"
+  ansible.builtin.fail:
+    msg: "NetBox returned 400. Response body: {{ _nb_device_page.json }}"
+  when: _nb_device_page.status == 400
+
+- name: "Netbox | Accumulate device pages"
+  ansible.builtin.set_fact:
+    _nb_all_devices: "{{ (_nb_all_devices | default([])) + _nb_device_page.json.results }}"
+    nb_device_page_num: "{{ (nb_device_page_num | default(0) | int) + 1 }}"
+
+- name: "Netbox | Fetch next page if more results exist"
+  ansible.builtin.include_tasks: fetch_netbox_devices.yml
+  when: _nb_device_page.json.next is not none
+
+# ── Per-device: fetch interfaces to get MAC addresses ──────────────────────
+- name: "Netbox | Fetch interfaces for each device"
+  ansible.builtin.uri:
+    url: "{{ netbox_url }}/api/dcim/interfaces/?device_id={{ item.id }}&limit=50"
+    method: GET
+    headers:
+      Authorization: "Token {{ netbox_token }}"
+      Content-Type: "application/json"
+    validate_certs: "{{ netbox_validate_certs }}"
+    return_content: true
+    status_code: 200
+  register: _nb_iface_results
+  loop: "{{ _nb_all_devices }}"
+  loop_control:
+    label: "{{ item.name }}"
+  no_log: true
+
+# ── Build netbox_devices dict for devices that have at least one MAC ────────
+# Keyed by bare MAC (no colons, lowercase) — matches fortigate_leases key format.
+# The bug in the previous version: zip gives (mac, dict) pairs already in the
+# correct order for dict(); map('reverse') was incorrectly swapping them,
+# making an unhashable dict the key.
+- name: "Netbox | Add device to netbox_devices (has MAC)"
+  ansible.builtin.set_fact:
+    netbox_devices: >-
+      {{
+        netbox_devices | default({}) | combine(
+          dict(_macs | zip(_dicts) | list)
+        )
+      }}
+  vars:
+    _raw_ifaces: >-
+      {{
+        _nb_iface_results.results
+        | selectattr('item.id', 'equalto', item_device.id)
+        | map(attribute='json.results')
+        | flatten
+        | selectattr('mac_address', 'defined')
+        | selectattr('mac_address', 'ne', none)
+        | list
+      }}
+    _macs: >-
+      {{
+        _raw_ifaces
+        | map(attribute='mac_address')
+        | map('lower')
+        | map('regex_replace', '[^0-9a-f]', '')
+        | list
+      }}
+    _dicts: >-
+      {{
+        _raw_ifaces
+        | map('combine', {
+            'device_name': item_device.name,
+            'device_id':   item_device.id,
+            'nb_ip':       item_device.primary_ip.address | regex_replace('/.*', '')
+                           if item_device.primary_ip else none,
+            'nb_ip_id':    item_device.primary_ip.id
+                           if item_device.primary_ip else none
+          })
+        | list
+      }}
+  when: _macs | length > 0
+  loop: "{{ _nb_all_devices }}"
+  loop_control:
+    label: "{{ item_device.name }}"
+    loop_var: item_device
+
+# ── Flag devices with no interfaces / no MAC as incomplete ──────────────────
+- name: "Netbox | Flag device as incomplete (no MAC)"
+  ansible.builtin.set_fact:
+    result_nb_incomplete: >-
+      {{
+        result_nb_incomplete | default([]) + [{
+          'name':      item_device.name,
+          'device_id': item_device.id,
+          'nb_ip':     item_device.primary_ip.address | regex_replace('/.*', '')
+                       if item_device.primary_ip else none
+        }]
+      }}
+  vars:
+    _mac_count: >-
+      {{
+        _nb_iface_results.results
+        | selectattr('item.id', 'equalto', item_device.id)
+        | map(attribute='json.results')
+        | flatten
+        | selectattr('mac_address', 'defined')
+        | selectattr('mac_address', 'ne', none)
+        | list
+        | length
+      }}
+  when: _mac_count | int == 0
+  loop: "{{ _nb_all_devices }}"
+  loop_control:
+    label: "{{ item_device.name }}"
+    loop_var: item_device
+
+- name: "Netbox | Summary"
+  ansible.builtin.debug:
+    msg:
+      - "Found {{ netbox_devices | default({}) | length }} printer(s) with MAC address in NetBox"
+      - "Found {{ result_nb_incomplete | default([]) | length }} printer(s) with no MAC (incomplete) in NetBox"
+      - "  (site={{ netbox_site_slug }}, role={{ netbox_device_role_slug }})"

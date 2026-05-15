@@ -1,0 +1,20 @@
+---
+# roles/fortigate_dhcp_reconcile/tasks/report.yml
+
+- name: "Report | Ensure reports directory exists"
+  ansible.builtin.file:
+    path: "{{ (reconcile_report_path | dirname) }}"
+    state: directory
+    mode: "0755"
+  delegate_to: localhost
+
+- name: "Report | Render HTML report"
+  ansible.builtin.template:
+    src: reconciliation_report.html.j2
+    dest: "{{ reconcile_report_path }}"
+    mode: "0644"
+  delegate_to: localhost
+
+- name: "Report | Report written"
+  ansible.builtin.debug:
+    msg: "Report saved to {{ reconcile_report_path }}"

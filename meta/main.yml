@@ -1,0 +1,24 @@
+---
+dependencies: []
+
+galaxy_info:
+  namespace: realtime
+  role_name: fortigate_dhcp_reconcile
+  author: "Bob Tanner"
+  description: "Reconciles active DHCP leases on a Fortigate 80F against printer device records in NetBox. Classifies every device as OK, IP drift, NetBox-only (offline),
+    or Fortigate-only (unknown), and renders a dark-mode HTML report. Optionally patches NetBox IP addresses to match live Fortigate leases when run with --tags fix_netbox."
+  company: "Real Time Enterprises, Inc."
+  license: "MIT"
+  min_ansible_version: "2.20"
+  platforms:
+    - name: Ubuntu
+      versions:
+        - resolute
+  galaxy_tags:
+    - netbox
+    - fortigate
+    - dhcp
+    - reconciliation
+    - printers
+    - networking
+    - ipam

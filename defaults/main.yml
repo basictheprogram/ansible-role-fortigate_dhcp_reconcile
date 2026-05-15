@@ -1,0 +1,34 @@
+---
+# Fortigate connection
+fortigate_host: "192.168.1.1"
+fortigate_port: 443
+fortigate_validate_certs: true
+fortigate_api_token: "{{ vault_fortigate_api_token }}"
+
+# VDOM name — check in FortiOS: System → VDOM, or run: get system status
+# Single-VDOM appliances still use "root"
+fortigate_vdom: "root"
+
+# Fortigate DHCP server ID — find in FortiOS: config system dhcp server → edit <id>
+fortigate_dhcp_server_id: 1
+
+# Netbox connection
+netbox_url: "http://netbox.example.local"
+netbox_token: "{{ vault_netbox_token }}"
+netbox_validate_certs: false
+
+# Netbox context - filter devices to this site/role
+netbox_site_slug: "main"
+netbox_device_role_slug: "printer"
+
+# Printer subnet - used to filter Fortigate leases to just printers
+printer_subnet: "10.0.10.0/24"
+
+# Report output path (relative to playbook dir)
+reconcile_report_path: "reports/reconciliation_{{ now(utc=true, fmt='%Y-%m-%d') }}.html"
+
+# Drift thresholds - how to classify a device
+# "ok"       - MAC in both, IPs match
+# "ip_drift" - MAC in both, IPs differ
+# "nb_only"  - MAC in Netbox, not in Fortigate leases (offline or never seen)
+# "fg_only"  - MAC in Fortigate leases, not in Netbox (unknown device)

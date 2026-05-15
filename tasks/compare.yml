@@ -1,0 +1,111 @@
+---
+# roles/fortigate_dhcp_reconcile/tasks/compare.yml
+# Walks both datasets and classifies every MAC into one of four states:
+#   ok        - MAC in both, IPs agree
+#   ip_drift  - MAC in both, IPs differ  ← needs Netbox patch
+#   nb_only   - MAC in Netbox, absent from Fortigate leases (offline/never seen)
+#   fg_only   - MAC in Fortigate, absent from Netbox (unknown device on network)
+
+- name: "Compare | Reset result lists"
+  ansible.builtin.set_fact:
+    result_ok: []
+    result_ip_drift: []
+    result_nb_only: []
+    result_fg_only: []
+    result_nb_incomplete: "{{ result_nb_incomplete | default([]) }}"
+
+# ── Devices known to Netbox ───────────────────────────────────────────────
+- name: "Compare | Classify Netbox devices against Fortigate leases"
+  ansible.builtin.set_fact:
+    result_ok: >-
+      {{
+        result_ok + ([{
+          'name':     nb_dev.value.device_name,
+          'mac':      nb_dev.value.mac_address | default(nb_dev.key),
+          'nb_ip':    nb_dev.value.nb_ip,
+          'fg_ip':    fortigate_leases[nb_dev.key].ip,
+          'device_id': nb_dev.value.device_id,
+          'nb_ip_id': nb_dev.value.nb_ip_id
+        }] if (
+          nb_dev.key in fortigate_leases
+          and nb_dev.value.nb_ip is not none
+          and nb_dev.value.nb_ip == fortigate_leases[nb_dev.key].ip
+        ) else [])
+      }}
+    result_ip_drift: >-
+      {{
+        result_ip_drift + ([{
+          'name':     nb_dev.value.device_name,
+          'mac':      nb_dev.value.mac_address | default(nb_dev.key),
+          'nb_ip':    nb_dev.value.nb_ip,
+          'fg_ip':    fortigate_leases[nb_dev.key].ip,
+          'device_id': nb_dev.value.device_id,
+          'nb_ip_id': nb_dev.value.nb_ip_id
+        }] if (
+          nb_dev.key in fortigate_leases
+          and (
+            nb_dev.value.nb_ip is none
+            or nb_dev.value.nb_ip != fortigate_leases[nb_dev.key].ip
+          )
+        ) else [])
+      }}
+    result_nb_only: >-
+      {{
+        result_nb_only + ([{
+          'name':     nb_dev.value.device_name,
+          'mac':      nb_dev.value.mac_address | default(nb_dev.key),
+          'nb_ip':    nb_dev.value.nb_ip,
+          'fg_ip':    none,
+          'device_id': nb_dev.value.device_id,
+          'nb_ip_id': nb_dev.value.nb_ip_id
+        }] if nb_dev.key not in fortigate_leases else [])
+      }}
+  loop: "{{ netbox_devices | dict2items }}"
+  loop_control:
+    loop_var: nb_dev
+    label: "{{ nb_dev.value.device_name }}"
+
+# ── Devices seen by Fortigate but unknown to Netbox ───────────────────────
+- name: "Compare | Identify Fortigate-only (unknown) devices"
+  ansible.builtin.set_fact:
+    result_fg_only: >-
+      {{
+        result_fg_only + ([{
+          'name':     fg_lease.value.hostname | default('unknown'),
+          'mac':      fg_lease.value.mac,
+          'nb_ip':    none,
+          'fg_ip':    fg_lease.value.ip,
+          'device_id': none,
+          'nb_ip_id': none
+        }] if fg_lease.key not in netbox_devices else [])
+      }}
+  loop: "{{ fortigate_leases | dict2items }}"
+  loop_control:
+    loop_var: fg_lease
+    label: "{{ fg_lease.value.ip }}"
+
+# ── Summary to console ────────────────────────────────────────────────────
+- name: "Compare | Print summary"
+  ansible.builtin.debug:
+    msg:
+      - "════════════════════════════════════════"
+      - " Reconciliation Summary"
+      - "════════════════════════════════════════"
+      - " ✅ OK (IPs match):               {{ result_ok | length }}"
+      - " ⚠️  IP Drift (needs fix):        {{ result_ip_drift | length }}"
+      - " 🔌 Netbox-only (offline?):       {{ result_nb_only | length }}"
+      - " ❓ Fortigate-only (unknown):      {{ result_fg_only | length }}"
+      - " 🔧 Incomplete in Netbox (no MAC): {{ result_nb_incomplete | length }}"
+      - "════════════════════════════════════════"
+
+- name: "Compare | List IP drift devices (action required)"
+  ansible.builtin.debug:
+    msg: "DRIFT: {{ item.name }} | Netbox={{ item.nb_ip | default('none') }} | Fortigate={{ item.fg_ip }}"
+  loop: "{{ result_ip_drift }}"
+  when: result_ip_drift | length > 0
+
+- name: "Compare | List unknown devices (not in Netbox)"
+  ansible.builtin.debug:
+    msg: "UNKNOWN: MAC={{ item.mac }} | Fortigate IP={{ item.fg_ip }} | hostname={{ item.name }}"
+  loop: "{{ result_fg_only }}"
+  when: result_fg_only | length > 0
